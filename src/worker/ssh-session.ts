@@ -142,10 +142,10 @@ export class SSHSession {
 
   attachSFTPWebSocket(ws: WebSocket): void {
     if (this.sftpWs && this.sftpWs !== ws) {
-      try { this.sftpWs.close(1000, 'Replaced by new SFTP WebSocket'); } catch {}
+      try { this.sftpWs.close(1000, 'Replaced by new SFTP WebSocket'); } catch (e) { this.sendDebug(() => `Close old SFTP ws: ${e instanceof Error ? e.message : e}`); }
     }
     this.sftpWs = ws;
-    try { ws.send(JSON.stringify({ type: 'sftp_socket_ready' })); } catch {}
+    try { ws.send(JSON.stringify({ type: 'sftp_socket_ready' })); } catch (e) { this.sendDebug(() => `Send sftp_socket_ready failed: ${e instanceof Error ? e.message : e}`); }
   }
 
   detachSFTPWebSocket(ws: WebSocket, closeChannel: boolean = true): void {
@@ -241,7 +241,7 @@ export class SSHSession {
       const errMsg = error instanceof Error ? error.message : String(error);
       try {
         this.ws.send(JSON.stringify({ type: 'error', message: 'SSH 连接异常: ' + errMsg }));
-      } catch {}
+      } catch (e) { this.sendDebug(() => `Send error to client failed: ${e instanceof Error ? e.message : e}`); }
     }
   }
 
@@ -617,8 +617,30 @@ export class SSHSession {
     // Compute host key fingerprint (SHA-256)
     const fpHash = new Uint8Array(await crypto.subtle.digest('SHA-256', hostKey));
     this.hostKeyFingerprint = 'SHA256:' + btoa(String.fromCharCode(...fpHash)).replace(/=+$/, '');
-    this.sendStatus(`服务器指纹: ${this.hostKeyFingerprint}`);
     this.sendDebug(`Host key fingerprint: ${this.hostKeyFingerprint}`);
+
+    // --- known_hosts verification (TOFU) ---
+    // Send fingerprint to frontend for storage
+    try {
+      this.ws.send(JSON.stringify({ type: 'host_key', fingerprint: this.hostKeyFingerprint }));
+    } catch (e) { /* ws closed */ }
+
+    // Compare against expected fingerprint if provided
+    if (this.config.expectedFingerprint) {
+      if (this.config.expectedFingerprint !== this.hostKeyFingerprint) {
+        this.sendError(
+          `主机密钥指纹不匹配！可能存在中间人攻击。\n` +
+          `已知指纹: ${this.config.expectedFingerprint}\n` +
+          `实际指纹: ${this.hostKeyFingerprint}\n` +
+          `连接已阻断。如需信任新密钥，请清除该服务器的 known_hosts 记录后重试。`
+        );
+        this.close();
+        return;
+      }
+      this.sendStatus(`主机密钥验证通过 ✓`);
+    } else {
+      this.sendStatus(`服务器指纹: ${this.hostKeyFingerprint}（首次连接，已记录）`);
+    }
 
     // Verify host key signature to confirm exchange hash is correct
     let sigVerified: boolean | null = false;
@@ -1065,7 +1087,7 @@ export class SSHSession {
             this.sendStatus('Shell 已就绪');
           }
           const outputData = channel.handleChannelData(payload);
-          try { this.ws.send(outputData); } catch {}
+          try { this.ws.send(outputData); } catch (e) { this.sendDebug(() => `Send shell output failed: ${e instanceof Error ? e.message : e}`); }
           this.queueLocalWindowAdjust(outputData.length, channel);
         } else if (this.sftpHandler && channelID === this.sftpHandler.getChannelID()) {
           // SFTP channel data - forward to SFTP handler
@@ -1090,7 +1112,7 @@ export class SSHSession {
           const dataLen = (payload[offset] << 24) | (payload[offset+1] << 16) | (payload[offset+2] << 8) | payload[offset+3];
           offset += 4;
           const stderrData = payload.subarray(offset, offset + dataLen);
-          try { this.ws.send(stderrData); } catch {}
+          try { this.ws.send(stderrData); } catch (e) { this.sendDebug(() => `Send stderr output failed: ${e instanceof Error ? e.message : e}`); }
           this.queueLocalWindowAdjust(stderrData.length, channel);
         }
         // SFTP channel extended data is rare, just ignore
@@ -1165,7 +1187,7 @@ export class SSHSession {
       let parsed: any = undefined;
       try {
         parsed = JSON.parse(data);
-      } catch {}
+      } catch (e) { this.sendDebug(() => `JSON parse failed: ${e instanceof Error ? e.message : e}`); }
 
       if (parsed && typeof parsed === 'object') {
         if (parsed.type === 'ping') {
@@ -1177,11 +1199,7 @@ export class SSHSession {
           return;
         }
 
-        // SFTP control messages
-        if (parsed.type && parsed.type.startsWith('sftp_')) {
-          this.enqueueSFTPTask(this.getSFTPOperation(parsed.type), () => this.handleSFTPMessage(parsed));
-          return;
-        }
+        // NOTE: SFTP control messages are handled over the dedicated SFTP WebSocket.
       }
 
       if (this.state !== 'ready') return;
@@ -1348,7 +1366,7 @@ export class SSHSession {
     if (!this.sftpAttachUrl) return;
     try {
       this.ws.send(JSON.stringify({ type: 'sftp_attach', url: this.sftpAttachUrl }));
-    } catch {}
+    } catch (e) { this.sendDebug(() => `Send sftp_attach url failed: ${e instanceof Error ? e.message : e}`); }
   }
 
   private getSFTPOperation(type: string | undefined): string {
@@ -1522,20 +1540,26 @@ export class SSHSession {
   private sendStatus(message: string): void {
     try {
       this.ws.send(JSON.stringify({ type: 'status', message }));
-    } catch {}
+    } catch (e) {
+      // WebSocket 已关闭，状态消息无法送达
+    }
   }
 
   private sendError(message: string): void {
     try {
       this.ws.send(JSON.stringify({ type: 'error', message }));
-    } catch {}
+    } catch (e) {
+      // WebSocket 已关闭，错误消息无法送达
+    }
   }
 
   private sendDebug(message: string | (() => string)): void {
     if (!this.debugMode) return;
     try {
       this.ws.send(JSON.stringify({ type: 'debug', message: typeof message === 'function' ? message() : message }));
-    } catch {}
+    } catch (e) {
+      // WebSocket 已关闭，调试消息无法送达
+    }
   }
 
   close(normal: boolean = false): void {
@@ -1559,11 +1583,11 @@ export class SSHSession {
     this.channelDataQueue = [];
     this.channelDataQueueHead = 0;
     this.channelDataQueueOffset = 0;
-    try { this.socketWriter?.releaseLock(); } catch {}
+    try { this.socketWriter?.releaseLock(); } catch (e) { this.sendDebug(() => `Release socket writer lock: ${e instanceof Error ? e.message : e}`); }
     this.socketWriter = null;
-    try { this.socket.close(); } catch {}
-    try { this.sftpWs?.close(normal ? 1000 : 1011); } catch {}
+    try { this.socket.close(); } catch (e) { this.sendDebug(() => `Close TCP socket: ${e instanceof Error ? e.message : e}`); }
+    try { this.sftpWs?.close(normal ? 1000 : 1011); } catch (e) { this.sendDebug(() => `Close SFTP ws: ${e instanceof Error ? e.message : e}`); }
     this.sftpWs = null;
-    try { this.ws.close(normal ? 1000 : 1011); } catch {}
+    try { this.ws.close(normal ? 1000 : 1011); } catch (e) { this.sendDebug(() => `Close SSH ws: ${e instanceof Error ? e.message : e}`); }
   }
 }

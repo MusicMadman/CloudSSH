@@ -148,6 +148,12 @@ export default {
       return handleThemeRoute(request, env);
     }
 
+    // ==================== known_hosts Routes (需认证) ====================
+
+    if (url.pathname === '/api/known-hosts' || url.pathname.startsWith('/api/known-hosts/')) {
+      return handleKnownHostsRoute(request, url, env);
+    }
+
     // ==================== Turnstile Verify ====================
 
     if (url.pathname === '/api/verify' && request.method === 'POST') {
@@ -356,6 +362,54 @@ async function handleThemeRoute(request: Request, env: Env): Promise<Response> {
   return Response.json({ error: 'Method not allowed' }, { status: 405 });
 }
 
+// ==================== known_hosts routes ====================
+
+async function handleKnownHostsRoute(request: Request, url: URL, env: Env): Promise<Response> {
+  const user = await getAuthenticatedUser(request, env);
+  if (!user) {
+    return Response.json({ error: 'Authentication required' }, { status: 401 });
+  }
+
+  const stub = getUserDBStub(env);
+
+  // GET /api/known-hosts?host=X&port=Y  → 获取特定主机指纹
+  // GET /api/known-hosts                 → 列出所有已知主机
+  if (request.method === 'GET') {
+    const host = url.searchParams.get('host');
+    const port = url.searchParams.get('port');
+    const qs = new URLSearchParams({ user_id: String(user.id) });
+    if (host) qs.set('host', host);
+    if (port) qs.set('port', port);
+    return stub.fetch(new Request(`http://internal/internal/known-hosts?${qs}`, {
+      method: 'GET',
+    }));
+  }
+
+  // POST /api/known-hosts  → 存储/更新主机指纹
+  if (request.method === 'POST') {
+    const body = await request.json<Record<string, unknown>>();
+    body.user_id = user.id;
+    return stub.fetch(new Request('http://internal/internal/known-hosts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }));
+  }
+
+  // DELETE /api/known-hosts  → 删除主机指纹
+  if (request.method === 'DELETE') {
+    const body = await request.json<Record<string, unknown>>();
+    body.user_id = user.id;
+    return stub.fetch(new Request('http://internal/internal/known-hosts', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }));
+  }
+
+  return Response.json({ error: 'Method not allowed' }, { status: 405 });
+}
+
 // ==================== SSH connection handlers ====================
 
 async function handleSSHConnection(request: Request, env: Env): Promise<Response> {
@@ -383,7 +437,10 @@ async function handleSSHConnection(request: Request, env: Env): Promise<Response
   const doUrl = new URL(request.url);
   doUrl.searchParams.set('session', sessionName);
 
-  return stub.fetch(new Request(doUrl.toString(), { headers: request.headers }));
+  const headers = new Headers(request.headers);
+  headers.set('x-cloudflare-colo', (request as any).cf?.colo || 'UNKNOWN');
+
+  return stub.fetch(new Request(doUrl.toString(), { headers }));
 }
 
 /**
@@ -428,8 +485,11 @@ async function handleTokenSSHConnection(request: Request, env: Env, token: strin
   doUrl.searchParams.set('config', encodeURIComponent(JSON.stringify(config)));
   doUrl.searchParams.set('session', sessionName);
 
+  const headers = new Headers(request.headers);
+  headers.set('x-cloudflare-colo', (request as any).cf?.colo || 'UNKNOWN');
+
   const doRequest = new Request(doUrl.toString(), {
-    headers: request.headers,
+    headers: headers,
   });
 
   return doStub.fetch(doRequest);

@@ -10,6 +10,7 @@ function isBlockedHost(host: string): boolean {
 
   // 特殊主机名
   if (h === 'localhost' || h === 'ip6-localhost' || h === 'ip6-loopback') return true;
+  if (h === '0.0.0.0' || h === '255.255.255.255' || h === 'broadcasthost') return true;
 
   // IPv4 私有 / 保留地址
   if (/^(127\.|10\.|0\.|192\.168\.|169\.254\.)/.test(h)) return true;
@@ -42,6 +43,7 @@ export class SSHSessionDO {
   private _pendingTimeouts: Map<WebSocket, ReturnType<typeof setTimeout>> = new Map();
   private pendingTerminalSizes: Map<WebSocket, TerminalSize> = new Map();
   private pendingAttachUrls: Map<WebSocket, string> = new Map();
+  private websocketColos: Map<WebSocket, string> = new Map();
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -82,6 +84,9 @@ export class SSHSessionDO {
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
 
+    const colo = request.headers.get('x-cloudflare-colo') || 'UNKNOWN';
+    this.websocketColos.set(server, colo);
+
     this.state.acceptWebSocket(server);
     const attachToken = crypto.randomUUID();
     const sftpAttachUrl = this.buildSFTPAttachUrl(url, sessionName, attachToken);
@@ -97,7 +102,7 @@ export class SSHSessionDO {
           try {
             server.send(JSON.stringify({ type: 'error', message: `连接失败: ${errMsg}` }));
             server.close(1011, 'SSH connection failed');
-          } catch {}
+          } catch (e) { console.error('Failed to notify client of connection error:', e); }
         }
       });
     } else {
@@ -105,7 +110,7 @@ export class SSHSessionDO {
         try {
           server.send(JSON.stringify({ type: 'error', message: 'Connection timeout' }));
           server.close(1011, 'Timeout');
-        } catch {}
+        } catch (e) { console.error('Failed to notify client of timeout:', e); }
       }, 10000);
 
       server.serializeAttachment({ state: 'waiting', timeout: null });
@@ -189,6 +194,7 @@ export class SSHSessionDO {
     }
     this.pendingTerminalSizes.delete(ws);
     this.pendingAttachUrls.delete(ws);
+    this.websocketColos.delete(ws);
   }
 
   async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
@@ -205,16 +211,24 @@ export class SSHSessionDO {
       if (isBlockedHost(config.host)) {
         throw new Error('禁止连接内网或保留地址 (SSRF 防护)');
       }
-      const BLOCKED_PORTS = [80, 443, 25, 465, 587, 3306, 6379, 27017, 11211];
+      const BLOCKED_PORTS = [
+        23, 80, 443, 25, 465, 587, 110, 143, 993, 995,
+        3306, 5432, 6379, 9200, 11211, 27017, 5060,
+      ];
       if (BLOCKED_PORTS.includes(config.port)) {
         throw new Error(`端口 ${config.port} 存在安全风险，已被禁止连接`);
       }
 
       const { connect } = await import('cloudflare:sockets');
       const hostname = config.host.includes(':') ? `[${config.host}]` : config.host;
+      
+      const startTime = Date.now();
       const socket = connect({ hostname, port: config.port });
-
       await socket.opened;
+      const latency = Date.now() - startTime;
+
+      const colo = this.websocketColos.get(ws) || 'UNKNOWN';
+      this.websocketColos.delete(ws);
 
       const strictVerify = this.env.STRICT_HOST_KEY_VERIFY !== 'false';
       const debugMode = this.env.DEBUG_MODE === 'true';
@@ -226,6 +240,11 @@ export class SSHSessionDO {
       const sftpAttachUrl = this.pendingAttachUrls.get(ws);
       const session = new SSHSession(ws, socket, config, strictVerify, debugMode, sftpAttachUrl);
       this.sessions.set(ws, session);
+
+      // 向前端发送双段延迟的物理基准延迟
+      try {
+        ws.send(JSON.stringify({ type: 'rtt', latency, colo }));
+      } catch {}
       if (attachToken) {
         this.sftpAttachTokens.set(attachToken, session);
       } else if (sftpAttachUrl) {
@@ -242,7 +261,7 @@ export class SSHSessionDO {
       try {
         ws.send(JSON.stringify({ type: 'error', message: `连接失败: ${errMsg}` }));
         ws.close(1011, 'SSH connection failed');
-      } catch {}
+      } catch (e) { console.error('Failed to notify client of SSH error:', e); }
     }
   }
 

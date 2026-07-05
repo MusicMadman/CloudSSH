@@ -477,7 +477,8 @@
 
     .terminal-statusbar {
       display: flex;
-      gap: 20px;
+      justify-content: space-between;
+      align-items: center;
       font-size: 10px;
       color: var(--on-surface-variant);
       padding-bottom: 10px;
@@ -1008,6 +1009,121 @@
       flex-shrink: 0;
     }
 
+    /* ===== Tab Bar Preview ===== */
+    .preview-tab-bar {
+      display: flex;
+      align-items: center;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 0 8px;
+      height: 32px;
+      overflow-x: auto;
+      gap: 2px;
+      position: relative;
+      z-index: 2;
+    }
+
+    .preview-tab-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: transparent;
+      border: 1px solid transparent;
+      border-bottom: none;
+      border-radius: 4px 4px 0 0;
+      cursor: pointer;
+      white-space: nowrap;
+      position: relative;
+    }
+
+    .preview-tab-item:hover {
+      color: var(--text);
+      background: var(--bg-elevated);
+      border-color: var(--border);
+    }
+
+    .preview-tab-item.active {
+      color: var(--accent);
+      background: var(--bg-elevated);
+      border-color: var(--border-strong);
+    }
+
+    .preview-tab-item.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent);
+    }
+
+    .preview-tab-item.disconnected {
+      opacity: 0.5;
+    }
+
+    .preview-tab-item.disconnected .tab-label {
+      text-decoration: line-through;
+    }
+
+    .preview-tab-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .preview-tab-dot.connected {
+      background: var(--accent);
+      box-shadow: 0 0 3px var(--accent);
+    }
+
+    .preview-tab-dot.disconnected {
+      background: var(--text-dim);
+    }
+
+    .preview-tab-close {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-dim);
+      cursor: pointer;
+      opacity: 0;
+      transition: all 0.15s;
+    }
+
+    .preview-tab-item:hover .preview-tab-close,
+    .preview-tab-item.active .preview-tab-close {
+      opacity: 1;
+    }
+
+    .preview-tab-close:hover {
+      color: var(--error);
+    }
+
+    .preview-tab-new-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px;
+      border: 1px dashed var(--border);
+      background: transparent;
+      color: var(--text-dim);
+      border-radius: 3px;
+      cursor: pointer;
+      margin-left: 2px;
+    }
+
+    .preview-tab-new-btn:hover {
+      color: var(--accent);
+      border-color: var(--accent);
+      background: var(--bg-elevated);
+    }
+
     /* ===== Hidden file input ===== */
     #import-input { display: none; }
   </style>
@@ -1105,6 +1221,28 @@
                     <span class="status-text"><span class="status-dot"></span> STATUS: OFFLINE</span>
                     <span style="font-size:10px;color:var(--text-muted);opacity:0.5">GitHub</span>
                   </div>
+                  <!-- Recent Connections Preview -->
+                  <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); display: block;">
+                    <label style="display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: var(--accent-secondary); margin-bottom: 8px;">RECENT_CONNECTIONS</label>
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding: 6px 8px; border: 1px solid var(--border); background: rgba(255,255,255,0.02); cursor: pointer;">
+                        <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; margin-right: 6px;">
+                          <span class="material-symbols-outlined" style="font-size: 12px; color: var(--text-muted)">history</span>
+                          <span style="color: var(--on-surface); text-overflow: ellipsis; white-space: nowrap; overflow: hidden;">admin@192.168.1.1:22</span>
+                          <span style="font-size: 8px; font-weight: 700; letter-spacing: 0.05em; color: var(--text-muted); border: 1px solid var(--border-strong); padding: 1px 3px;">PWD</span>
+                        </div>
+                        <span class="material-symbols-outlined" style="font-size: 12px; color: var(--text-dim)">close</span>
+                      </div>
+                      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding: 6px 8px; border: 1px solid var(--border); background: rgba(255,255,255,0.02); cursor: pointer;">
+                        <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; margin-right: 6px;">
+                          <span class="material-symbols-outlined" style="font-size: 12px; color: var(--text-muted)">history</span>
+                          <span style="color: var(--on-surface); text-overflow: ellipsis; white-space: nowrap; overflow: hidden;">deploy@10.0.0.5:2222</span>
+                          <span style="font-size: 8px; font-weight: 700; letter-spacing: 0.05em; color: var(--text-muted); border: 1px solid var(--border-strong); padding: 1px 3px;">KEY</span>
+                        </div>
+                        <span class="material-symbols-outlined" style="font-size: 12px; color: var(--text-dim)">close</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <div class="login-footer">
                   <a href="#">[ GitHub Open Source ]</a>
@@ -1188,15 +1326,41 @@
         <div class="preview-section col-terminal">
           <div class="preview-label">TERMINAL + SFTP</div>
           <div class="preview-frame">
+            <!-- Tab Bar Preview -->
+            <div class="preview-tab-bar">
+              <div class="preview-tab-item active">
+                <span class="preview-tab-dot connected"></span>
+                <span class="tab-label">root@ubuntu</span>
+                <span class="material-symbols-outlined preview-tab-close" style="font-size:12px">close</span>
+              </div>
+              <div class="preview-tab-item">
+                <span class="preview-tab-dot connected"></span>
+                <span class="tab-label">Production</span>
+                <span class="material-symbols-outlined preview-tab-close" style="font-size:12px">close</span>
+              </div>
+              <div class="preview-tab-item disconnected">
+                <span class="preview-tab-dot disconnected"></span>
+                <span class="tab-label">10.0.0.5</span>
+                <span class="material-symbols-outlined preview-tab-close" style="font-size:12px">close</span>
+              </div>
+              <div class="preview-tab-new-btn">
+                <span class="material-symbols-outlined" style="font-size:12px">add</span>
+              </div>
+            </div>
             <div class="terminal-sftp-preview">
               <!-- Terminal Area -->
               <div class="terminal-preview">
                 <div class="scanline"></div>
-                <div class="terminal-statusbar">
-                  <span class="connected"><span class="dot-green"></span> Connected</span>
-                  <span>Host: 192.168.1.1</span>
-                  <span>User: root</span>
-                  <span>Port: 22</span>
+                <div class="terminal-statusbar" style="display:flex;justify-content:space-between;">
+                  <div style="display:flex;gap:20px;">
+                    <span class="connected"><span class="dot-green"></span> Connected</span>
+                    <span>Host: 192.168.1.1</span>
+                    <span>User: root</span>
+                    <span>Port: 22</span>
+                  </div>
+                  <div>
+                    <span>⚡ CF-HKG: 34ms | RTT: 12ms</span>
+                  </div>
                 </div>
                 <div class="terminal-body">
                   <div class="line green">[+] WebSocket connected, sending credentials...</div>
